@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Cosmic Crusher">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Cosmic Crusher</title>
+<meta name="cosmic-crusher-build" content="firebase-leaderboard-2026-09-27">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{
@@ -41,6 +42,10 @@ html,body{
 #start-screen p{
   color:#8888bb;font-size:clamp(14px,3.5vw,16px);
   max-width:400px;text-align:center;line-height:1.6;
+}
+.build-tag{
+  color:#66eaff;font-size:11px;letter-spacing:2px;text-transform:uppercase;
+  opacity:.82;text-align:center;
 }
 #player-name{
   width:min(320px,90vw);padding:13px 16px;border-radius:14px;
@@ -212,6 +217,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
 <div id="start-screen">
   <h1>COSMIC CRUSHER</h1>
   <p>Asteroids rain from the sky! Tap to destroy them, earn credits, and upgrade your arsenal.</p>
+  <div class="build-tag">Firebase leaderboard build</div>
   <input id="player-name" maxlength="18" autocomplete="off" placeholder="ENTER YOUR NAME">
   <button id="start-btn" type="button">LAUNCH</button>
 </div>
@@ -324,6 +330,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   var LEGACY_SAVE_KEY='cosmicCrusherSaveV2';
   var PROFILE_KEY='cosmicCrusherPlayerProfileV1';
   var LEADERBOARD_KEY='cosmicCrusherLocalLeaderboardV1';
+  var DEVICE_ID_KEY='cosmicCrusherDeviceIdV1';
   var RESET_MARKER='cosmicCrusherFreshReset_2026_09_26_v1';
 
   try{
@@ -336,6 +343,22 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   var sessionId='s'+Date.now().toString(36)+Math.random().toString(36).slice(2);
   var lastLoadedSaveTime=0;
   var saveRepairNotice=false;
+  var leaderboardSource='local';
+  var remoteSubmitTimer=null;
+  var lastRemoteSubmit=0;
+  var deviceId=getDeviceId();
+  function getDeviceId(){
+    try{
+      var id=localStorage.getItem(DEVICE_ID_KEY);
+      if(!id){
+        id='d'+Date.now().toString(36)+Math.random().toString(36).slice(2);
+        localStorage.setItem(DEVICE_ID_KEY,id);
+      }
+      return id;
+    }catch(err){
+      return 'd'+Math.random().toString(36).slice(2);
+    }
+  }
   function loadPlayerProfile(){
     try{
       var raw=localStorage.getItem(PROFILE_KEY);
@@ -370,6 +393,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       var rows=readLeaderboard();
       var score=Math.floor(totalCredits);
       var current={
+        deviceId:deviceId,
         name:playerName,
         wave:wave,
         total:score,
@@ -395,13 +419,42 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       });
       rows=rows.slice(0,8);
       localStorage.setItem(LEADERBOARD_KEY,JSON.stringify(rows));
-      renderLeaderboard(rows);
+      if(leaderboardSource!=='global') renderLeaderboard(rows,'LOCAL LEADERBOARD');
+      scheduleRemoteLeaderboardSave(current);
     }catch(err){}
   }
-  function renderLeaderboard(rows){
+  function scheduleRemoteLeaderboardSave(score){
+    if(!window.cosmicLeaderboard || !window.cosmicLeaderboard.ready) return;
+    var now=Date.now();
+    if(now-lastRemoteSubmit<8000){
+      clearTimeout(remoteSubmitTimer);
+      remoteSubmitTimer=setTimeout(function(){scheduleRemoteLeaderboardSave(score)},8500);
+      return;
+    }
+    lastRemoteSubmit=now;
+    window.cosmicLeaderboard.submit(score).then(function(){
+      loadGlobalLeaderboard();
+    }).catch(function(){});
+  }
+  function loadGlobalLeaderboard(){
+    if(!window.cosmicLeaderboard || !window.cosmicLeaderboard.ready){
+      renderLeaderboard(readLeaderboard(),'LOCAL LEADERBOARD');
+      return;
+    }
+    window.cosmicLeaderboard.load().then(function(rows){
+      leaderboardSource='global';
+      renderLeaderboard(rows,'GLOBAL LEADERBOARD');
+    }).catch(function(){
+      leaderboardSource='local';
+      renderLeaderboard(readLeaderboard(),'LOCAL LEADERBOARD');
+    });
+  }
+  function renderLeaderboard(rows,title){
     var list=document.getElementById('leaderboard-list');
     if(!list) return;
     rows=rows||readLeaderboard();
+    var titleEl=list.parentNode ? list.parentNode.querySelector('.panel-title') : null;
+    if(titleEl) titleEl.textContent=title||'LOCAL LEADERBOARD';
     if(!rows.length){
       list.innerHTML='<div style="text-align:center;color:#8888aa;">No scores yet</div>';
       return;
@@ -543,6 +596,9 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   setInterval(function(){if(!document.hidden)saveGame();},3000);
   window.addEventListener('pagehide',saveGame);
   document.addEventListener('visibilitychange',function(){if(document.hidden)saveGame();});
+  window.addEventListener('cosmicLeaderboardReady',function(){
+    if(launched) loadGlobalLeaderboard();
+  });
 
   // LAUNCH
   window.launchGame = function(e){
@@ -557,7 +613,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     initCanvas();
     initStars();
     renderUpgrades();
-    renderLeaderboard();
+    loadGlobalLeaderboard();
     updateHUD();
     gameRunning = true;
     requestAnimationFrame(gameLoop);
@@ -1106,6 +1162,78 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   }
 
 })();
+</script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getFirestore,
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    limit,
+    orderBy,
+    query,
+    setDoc
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBT-LyoBbOZ47Rq9CTwyCNwxuPf83cgI6Y",
+    authDomain: "cosmic-crusher-6a921.firebaseapp.com",
+    projectId: "cosmic-crusher-6a921",
+    storageBucket: "cosmic-crusher-6a921.firebasestorage.app",
+    messagingSenderId: "1095582733568",
+    appId: "1:1095582733568:web:04ef4ffc2c8bc75537cfe5"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const board = collection(db, "leaderboard");
+
+  function cleanRemoteScore(score) {
+    return {
+      deviceId: String(score.deviceId || "unknown").slice(0, 80),
+      name: String(score.name || "Pilot").slice(0, 18),
+      prestige: Math.max(0, Math.floor(Number(score.prestige) || 0)),
+      wave: Math.max(1, Math.floor(Number(score.wave) || 1)),
+      total: Math.max(0, Math.floor(Number(score.total) || 0)),
+      destroyed: Math.max(0, Math.floor(Number(score.destroyed) || 0)),
+      updatedAt: Date.now()
+    };
+  }
+
+  function isBetter(next, prev) {
+    if (!prev) return true;
+    return next.prestige > Number(prev.prestige || 0) ||
+      (next.prestige === Number(prev.prestige || 0) && next.wave > Number(prev.wave || 0)) ||
+      (next.prestige === Number(prev.prestige || 0) && next.wave === Number(prev.wave || 0) && next.total > Number(prev.total || 0));
+  }
+
+  window.cosmicLeaderboard = {
+    ready: true,
+    async submit(score) {
+      const clean = cleanRemoteScore(score);
+      const id = clean.deviceId + "_" + clean.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      const ref = doc(board, id.slice(0, 140));
+      const existing = await getDoc(ref);
+      if (isBetter(clean, existing.exists() ? existing.data() : null)) {
+        await setDoc(ref, clean, { merge: true });
+      }
+    },
+    async load() {
+      const q = query(
+        board,
+        orderBy("prestige", "desc"),
+        orderBy("wave", "desc"),
+        orderBy("total", "desc"),
+        limit(10)
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map(function(row) { return row.data(); });
+    }
+  };
+
+  window.dispatchEvent(new Event("cosmicLeaderboardReady"));
 </script>
 </body>
 </html>
