@@ -164,7 +164,28 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   border:1px solid rgba(0,200,255,0.25);border-radius:10px;
   background:rgba(0,0,0,0.22);padding:10px;
 }
-.panel-title{font-size:12px;color:#66eaff;letter-spacing:2px;text-align:center;margin-bottom:7px}
+.panel-title{font-size:12px;color:#66eaff;letter-spacing:2px;text-align:center}
+.leaderboard-box{padding:0;overflow:hidden}
+.leaderboard-toggle{
+  width:100%;border:0;background:rgba(0,0,0,0.18);color:#fff;
+  display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;
+  padding:10px;cursor:pointer;touch-action:manipulation;
+}
+.leaderboard-badge{
+  font-size:10px;color:#ffcc00;border:1px solid rgba(255,204,0,0.35);
+  border-radius:999px;padding:3px 7px;letter-spacing:1px;
+}
+.leaderboard-arrow{color:#66eaff;font-size:13px}
+.leaderboard-menu{display:none;padding:0 10px 10px 10px}
+.leaderboard-menu.open{display:block}
+.leaderboard-controls{display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-bottom:7px}
+.leaderboard-control{
+  border:1px solid rgba(0,200,255,0.28);background:rgba(0,0,0,0.28);
+  color:#9eefff;border-radius:8px;padding:7px 8px;font-size:11px;
+  cursor:pointer;touch-action:manipulation;
+}
+.leaderboard-control.active{background:rgba(0,200,255,0.18);color:#fff;border-color:rgba(0,200,255,0.7)}
+.leaderboard-status{min-height:15px;font-size:10px;color:#8888aa;text-align:center;margin-bottom:6px}
 #leaderboard-list{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#ddd}
 .leader-row{display:grid;grid-template-columns:22px 1fr auto;gap:6px;align-items:center}
 .leader-name{color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -242,9 +263,21 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   <div id="shop-panel">
     <div id="shop-handle"></div>
     <h2>UPGRADES</h2>
-    <div class="panel-box">
-      <div class="panel-title">LOCAL LEADERBOARD</div>
-      <div id="leaderboard-list"></div>
+    <div class="panel-box leaderboard-box">
+      <button id="leaderboard-toggle" class="leaderboard-toggle" type="button" aria-expanded="true">
+        <span id="leaderboard-title" class="panel-title">LOCAL LEADERBOARD</span>
+        <span id="leaderboard-source-badge" class="leaderboard-badge">LOCAL</span>
+        <span id="leaderboard-arrow" class="leaderboard-arrow">&#9662;</span>
+      </button>
+      <div id="leaderboard-menu" class="leaderboard-menu open">
+        <div class="leaderboard-controls">
+          <button id="leaderboard-global" class="leaderboard-control" type="button">GLOBAL</button>
+          <button id="leaderboard-local" class="leaderboard-control active" type="button">LOCAL</button>
+          <button id="leaderboard-refresh" class="leaderboard-control" type="button">&#8635;</button>
+        </div>
+        <div id="leaderboard-status" class="leaderboard-status">Local scores saved on this device</div>
+        <div id="leaderboard-list"></div>
+      </div>
     </div>
     <div id="upgrade-list"></div>
     <div id="prestige-section">
@@ -344,8 +377,11 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   var lastLoadedSaveTime=0;
   var saveRepairNotice=false;
   var leaderboardSource='local';
+  var leaderboardView='local';
+  var leaderboardOpen=true;
   var remoteSubmitTimer=null;
   var lastRemoteSubmit=0;
+  var leaderboardRefreshTimer=null;
   var deviceId=getDeviceId();
   function getDeviceId(){
     try{
@@ -433,19 +469,72 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     }
     lastRemoteSubmit=now;
     window.cosmicLeaderboard.submit(score).then(function(){
-      loadGlobalLeaderboard();
+      if(leaderboardView==='global') loadGlobalLeaderboard();
     }).catch(function(){});
+  }
+  function setLeaderboardStatus(text){
+    var el=document.getElementById('leaderboard-status');
+    if(el) el.textContent=text||'';
+  }
+  function syncLeaderboardControls(){
+    var globalBtn=document.getElementById('leaderboard-global');
+    var localBtn=document.getElementById('leaderboard-local');
+    var badge=document.getElementById('leaderboard-source-badge');
+    if(globalBtn) globalBtn.classList.toggle('active',leaderboardView==='global');
+    if(localBtn) localBtn.classList.toggle('active',leaderboardView==='local');
+    if(badge) badge.textContent=leaderboardView==='global'?'GLOBAL':'LOCAL';
+  }
+  function setLeaderboardOpen(open){
+    leaderboardOpen=!!open;
+    var menu=document.getElementById('leaderboard-menu');
+    var toggle=document.getElementById('leaderboard-toggle');
+    var arrow=document.getElementById('leaderboard-arrow');
+    if(menu) menu.classList.toggle('open',leaderboardOpen);
+    if(toggle) toggle.setAttribute('aria-expanded',leaderboardOpen?'true':'false');
+    if(arrow) arrow.innerHTML=leaderboardOpen?'&#9662;':'&#9656;';
+    if(leaderboardOpen && leaderboardView==='global') loadGlobalLeaderboard();
+    syncLeaderboardRefresh();
+  }
+  function setLeaderboardView(view){
+    leaderboardView=view==='global'?'global':'local';
+    syncLeaderboardControls();
+    if(leaderboardView==='global') loadGlobalLeaderboard();
+    else {
+      leaderboardSource='local';
+      setLeaderboardStatus('Local scores saved on this device');
+      renderLeaderboard(readLeaderboard(),'LOCAL LEADERBOARD');
+    }
+    syncLeaderboardRefresh();
+  }
+  function syncLeaderboardRefresh(){
+    clearInterval(leaderboardRefreshTimer);
+    leaderboardRefreshTimer=null;
+    if(leaderboardOpen && leaderboardView==='global'){
+      leaderboardRefreshTimer=setInterval(function(){
+        if(launched && !document.hidden) loadGlobalLeaderboard(true);
+      },7000);
+    }
   }
   function loadGlobalLeaderboard(){
     if(!window.cosmicLeaderboard || !window.cosmicLeaderboard.ready){
+      leaderboardView='local';
+      syncLeaderboardControls();
+      setLeaderboardStatus('Global leaderboard connecting...');
       renderLeaderboard(readLeaderboard(),'LOCAL LEADERBOARD');
       return;
     }
+    leaderboardView='global';
+    syncLeaderboardControls();
+    setLeaderboardStatus('Syncing global leaderboard...');
     window.cosmicLeaderboard.load().then(function(rows){
       leaderboardSource='global';
+      setLeaderboardStatus('Live global scores refresh while open');
       renderLeaderboard(rows,'GLOBAL LEADERBOARD');
     }).catch(function(){
       leaderboardSource='local';
+      leaderboardView='local';
+      syncLeaderboardControls();
+      setLeaderboardStatus('Global unavailable, showing local scores');
       renderLeaderboard(readLeaderboard(),'LOCAL LEADERBOARD');
     });
   }
@@ -453,8 +542,9 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     var list=document.getElementById('leaderboard-list');
     if(!list) return;
     rows=rows||readLeaderboard();
-    var titleEl=list.parentNode ? list.parentNode.querySelector('.panel-title') : null;
+    var titleEl=document.getElementById('leaderboard-title');
     if(titleEl) titleEl.textContent=title||'LOCAL LEADERBOARD';
+    syncLeaderboardControls();
     if(!rows.length){
       list.innerHTML='<div style="text-align:center;color:#8888aa;">No scores yet</div>';
       return;
@@ -597,7 +687,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   window.addEventListener('pagehide',saveGame);
   document.addEventListener('visibilitychange',function(){if(document.hidden)saveGame();});
   window.addEventListener('cosmicLeaderboardReady',function(){
-    if(launched) loadGlobalLeaderboard();
+    if(launched && leaderboardView==='global') loadGlobalLeaderboard();
   });
 
   // LAUNCH
@@ -666,6 +756,23 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
 
   // Shop toggle button
   document.getElementById('shop-toggle').addEventListener('click', function(e){e.stopPropagation();window.toggleShop();});
+
+  document.getElementById('leaderboard-toggle').addEventListener('click',function(){
+    setLeaderboardOpen(!leaderboardOpen);
+  });
+  document.getElementById('leaderboard-global').addEventListener('click',function(e){
+    e.stopPropagation();
+    setLeaderboardView('global');
+  });
+  document.getElementById('leaderboard-local').addEventListener('click',function(e){
+    e.stopPropagation();
+    setLeaderboardView('local');
+  });
+  document.getElementById('leaderboard-refresh').addEventListener('click',function(e){
+    e.stopPropagation();
+    if(leaderboardView==='global') loadGlobalLeaderboard();
+    else renderLeaderboard(readLeaderboard(),'LOCAL LEADERBOARD');
+  });
 
   document.getElementById('prestige-btn').addEventListener('pointerup',function(e){
     e.preventDefault(); e.stopPropagation(); window.prestige();
@@ -1163,77 +1270,106 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
 
 })();
 </script>
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import {
-    getFirestore,
-    collection,
-    doc,
-    getDoc,
-    getDocs,
-    limit,
-    orderBy,
-    query,
-    setDoc
-  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+<script>
+(function(){
+  "use strict";
 
-  const firebaseConfig = {
+  var firebaseConfig = {
     apiKey: "AIzaSyBT-LyoBbOZ47Rq9CTwyCNwxuPf83cgI6Y",
-    authDomain: "cosmic-crusher-6a921.firebaseapp.com",
-    projectId: "cosmic-crusher-6a921",
-    storageBucket: "cosmic-crusher-6a921.firebasestorage.app",
-    messagingSenderId: "1095582733568",
-    appId: "1:1095582733568:web:04ef4ffc2c8bc75537cfe5"
+    projectId: "cosmic-crusher-6a921"
   };
+  var baseUrl = "https://firestore.googleapis.com/v1/projects/" +
+    firebaseConfig.projectId + "/databases/(default)/documents/leaderboard";
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  const board = collection(db, "leaderboard");
+  function request(method,url,body){
+    return new Promise(function(resolve,reject){
+      var xhr = new XMLHttpRequest();
+      xhr.open(method,url,true);
+      xhr.setRequestHeader("Content-Type","application/json");
+      xhr.onload = function(){
+        var data = null;
+        try{ data = xhr.responseText ? JSON.parse(xhr.responseText) : null; }catch(err){}
+        if(xhr.status>=200 && xhr.status<300) resolve(data);
+        else reject({status:xhr.status,data:data});
+      };
+      xhr.onerror = function(){ reject({status:0}); };
+      xhr.send(body ? JSON.stringify(body) : null);
+    });
+  }
 
-  function cleanRemoteScore(score) {
+  function cleanRemoteScore(score){
     return {
-      deviceId: String(score.deviceId || "unknown").slice(0, 80),
-      name: String(score.name || "Pilot").slice(0, 18),
-      prestige: Math.max(0, Math.floor(Number(score.prestige) || 0)),
-      wave: Math.max(1, Math.floor(Number(score.wave) || 1)),
-      total: Math.max(0, Math.floor(Number(score.total) || 0)),
-      destroyed: Math.max(0, Math.floor(Number(score.destroyed) || 0)),
-      updatedAt: Date.now()
+      deviceId:String(score.deviceId||"unknown").slice(0,80),
+      name:String(score.name||"Pilot").slice(0,18),
+      prestige:Math.max(0,Math.floor(Number(score.prestige)||0)),
+      wave:Math.max(1,Math.floor(Number(score.wave)||1)),
+      total:Math.max(0,Math.floor(Number(score.total)||0)),
+      destroyed:Math.max(0,Math.floor(Number(score.destroyed)||0)),
+      updatedAt:Date.now()
     };
   }
 
-  function isBetter(next, prev) {
-    if (!prev) return true;
-    return next.prestige > Number(prev.prestige || 0) ||
-      (next.prestige === Number(prev.prestige || 0) && next.wave > Number(prev.wave || 0)) ||
-      (next.prestige === Number(prev.prestige || 0) && next.wave === Number(prev.wave || 0) && next.total > Number(prev.total || 0));
+  function toFields(score){
+    return {fields:{
+      deviceId:{stringValue:score.deviceId},
+      name:{stringValue:score.name},
+      prestige:{integerValue:String(score.prestige)},
+      wave:{integerValue:String(score.wave)},
+      total:{integerValue:String(score.total)},
+      destroyed:{integerValue:String(score.destroyed)},
+      updatedAt:{integerValue:String(score.updatedAt)}
+    }};
+  }
+
+  function fromDoc(doc){
+    var f = doc && doc.fields ? doc.fields : {};
+    function str(name,fallback){return f[name] && f[name].stringValue || fallback;}
+    function num(name,fallback){return Number(f[name] && (f[name].integerValue || f[name].doubleValue)) || fallback;}
+    return {
+      deviceId:str("deviceId",""),
+      name:str("name","Pilot"),
+      prestige:num("prestige",0),
+      wave:num("wave",1),
+      total:num("total",0),
+      destroyed:num("destroyed",0),
+      updatedAt:num("updatedAt",0)
+    };
+  }
+
+  function isBetter(next,prev){
+    if(!prev) return true;
+    return next.prestige>Number(prev.prestige||0) ||
+      (next.prestige===Number(prev.prestige||0) && next.wave>Number(prev.wave||0)) ||
+      (next.prestige===Number(prev.prestige||0) && next.wave===Number(prev.wave||0) && next.total>Number(prev.total||0));
   }
 
   window.cosmicLeaderboard = {
-    ready: true,
-    async submit(score) {
-      const clean = cleanRemoteScore(score);
-      const id = clean.deviceId + "_" + clean.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
-      const ref = doc(board, id.slice(0, 140));
-      const existing = await getDoc(ref);
-      if (isBetter(clean, existing.exists() ? existing.data() : null)) {
-        await setDoc(ref, clean, { merge: true });
-      }
+    ready:true,
+    submit:function(score){
+      var clean = cleanRemoteScore(score);
+      var id = (clean.deviceId+"_"+clean.name.toLowerCase().replace(/[^a-z0-9]+/g,"_")).slice(0,140);
+      var docUrl = baseUrl + "/" + encodeURIComponent(id) + "?key=" + firebaseConfig.apiKey;
+      return request("GET",docUrl).catch(function(err){
+        if(err && err.status===404) return null;
+        throw err;
+      }).then(function(existing){
+        var prev = existing ? fromDoc(existing) : null;
+        if(!isBetter(clean,prev)) return null;
+        return request("PATCH",docUrl,toFields(clean));
+      });
     },
-    async load() {
-      const q = query(
-        board,
-        orderBy("prestige", "desc"),
-        orderBy("wave", "desc"),
-        orderBy("total", "desc"),
-        limit(10)
-      );
-      const snap = await getDocs(q);
-      return snap.docs.map(function(row) { return row.data(); });
+    load:function(){
+      var url = baseUrl + "?key=" + firebaseConfig.apiKey +
+        "&pageSize=10&orderBy=prestige%20desc,wave%20desc,total%20desc";
+      return request("GET",url).then(function(data){
+        var docs = data && data.documents ? data.documents : [];
+        return docs.map(fromDoc);
+      });
     }
   };
 
   window.dispatchEvent(new Event("cosmicLeaderboardReady"));
+})();
 </script>
 </body>
 </html>
