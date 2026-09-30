@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Cosmic Crusher">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Cosmic Crusher</title>
-<meta name="cosmic-crusher-build" content="mobile-leaderboard-shop-2026-09-29">
+<meta name="cosmic-crusher-build" content="premium-asteroids-2026-09-30">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{
@@ -1330,49 +1330,105 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   }
 
   function drawAsteroid(obj){
+    var z=obj.size;
     var seed = obj.variant==='diamond' ? 0.91 : obj.variant==='amethyst' ? 0.76 : obj.variant==='gold' ? 0.62 : obj.variant==='iron' ? 0.48 : 0.38;
-    var mineral=obj.variant==='diamond'?'#dffbff':obj.variant==='amethyst'?'#ead2ff':obj.variant==='gold'?'#ffe39a':obj.variant==='iron'?'#eef5ff':'#b7bac4';
-    var grad=gameCtx.createRadialGradient(-obj.size*.32,-obj.size*.38,obj.size*.05,0,0,obj.size*1.08);
-    grad.addColorStop(0,mineral);
-    grad.addColorStop(.32,obj.color);
-    grad.addColorStop(1,'#202532');
+    var palette={
+      stone:{hi:'#c4c7cf',mid:'#777b86',low:'#292d38',rim:'rgba(255,255,255,.24)',vein:'rgba(210,220,230,.18)',crater:'rgba(24,26,34,.44)'},
+      iron:{hi:'#f0f7ff',mid:'#9aa7b6',low:'#26313b',rim:'#dce9f5',vein:'rgba(195,225,255,.35)',crater:'rgba(35,45,55,.42)'},
+      gold:{hi:'#fff2aa',mid:'#d9a52a',low:'#57370d',rim:'#ffe39a',vein:'rgba(255,238,145,.58)',crater:'rgba(84,50,8,.45)'},
+      amethyst:{hi:'#f0d2ff',mid:'#a65cff',low:'#31124e',rim:'#e3c5ff',vein:'rgba(235,196,255,.7)',crater:'rgba(48,13,79,.48)'},
+      diamond:{hi:'#f7ffff',mid:'#43d9ff',low:'#063a55',rim:'#e9fdff',vein:'rgba(245,255,255,.82)',crater:'rgba(0,90,125,.34)'}
+    }[obj.variant] || {hi:'#c4c7cf',mid:obj.color,low:'#252936',rim:'rgba(255,255,255,.25)',vein:'rgba(255,255,255,.18)',crater:'rgba(0,0,0,.35)'};
+
+    var grad=gameCtx.createRadialGradient(-z*.35,-z*.42,z*.04,0,0,z*1.18);
+    grad.addColorStop(0,palette.hi);
+    grad.addColorStop(.35,palette.mid);
+    grad.addColorStop(.78,palette.low);
+    grad.addColorStop(1,'#080a12');
     gameCtx.fillStyle=grad;
     gameCtx.beginPath();
-    for(var i=0;i<12;i++){
-      var a=(i/12)*Math.PI*2;
-      var r=obj.size*(0.78 + 0.16*Math.sin(i*4.31+seed*10) + 0.07*Math.cos(i*7.7));
+    var points=[];
+    for(var i=0;i<16;i++){
+      var a=(i/16)*Math.PI*2;
+      var chip=(i%3===0?.1:0) - (i%5===0?.08:0);
+      var r=z*(0.82 + chip + 0.13*Math.sin(i*3.9+seed*10) + 0.08*Math.cos(i*7.1+seed));
+      points.push([Math.cos(a)*r,Math.sin(a)*r]);
       i===0?gameCtx.moveTo(Math.cos(a)*r,Math.sin(a)*r):gameCtx.lineTo(Math.cos(a)*r,Math.sin(a)*r);
     }
     gameCtx.closePath(); gameCtx.fill();
+
     gameCtx.save();
-    gameCtx.globalAlpha=.22;
+    gameCtx.clip();
+    var shade=gameCtx.createLinearGradient(-z,-z,z,z);
+    shade.addColorStop(0,'rgba(255,255,255,.22)');
+    shade.addColorStop(.45,'rgba(255,255,255,0)');
+    shade.addColorStop(1,'rgba(0,0,0,.38)');
+    gameCtx.fillStyle=shade;
+    gameCtx.fillRect(-z*1.2,-z*1.2,z*2.4,z*2.4);
+    gameCtx.restore();
+
+    gameCtx.save();
+    gameCtx.globalAlpha=.25;
     gameCtx.fillStyle='#ffffff';
     gameCtx.beginPath();
-    gameCtx.ellipse(-obj.size*.22,-obj.size*.35,obj.size*.18,obj.size*.08,-.5,0,Math.PI*2);
+    gameCtx.ellipse(-z*.24,-z*.38,z*.2,z*.075,-.5,0,Math.PI*2);
     gameCtx.fill();
     gameCtx.restore();
-    gameCtx.strokeStyle=obj.variant==='diamond'?'#e9fdff':obj.variant==='amethyst'?'#e3c5ff':obj.variant==='gold'?'#ffe39a':obj.variant==='iron'?'#e5edf5':'rgba(255,255,255,.22)'; gameCtx.lineWidth=obj.variant==='diamond'?3:2; gameCtx.stroke();
-    // Craters / mineral scars make these read as actual asteroids instead of polygons.
+
+    gameCtx.strokeStyle=palette.rim;
+    gameCtx.lineWidth=obj.variant==='diamond'?3:2.2;
+    gameCtx.stroke();
+    gameCtx.strokeStyle='rgba(0,0,0,.38)';
+    gameCtx.lineWidth=1.25;
+    gameCtx.beginPath();
+    for(var e=0;e<points.length;e+=2){
+      var p1=points[e], p2=points[(e+1)%points.length];
+      gameCtx.moveTo(p1[0]*.92,p1[1]*.92);
+      gameCtx.lineTo(p2[0]*.92,p2[1]*.92);
+    }
+    gameCtx.stroke();
+
+    // Craters / mineral scars make these read as actual asteroids instead of recolored blobs.
     gameCtx.shadowBlur=0;
-    var spots=[[ -.28,-.18,.22],[.26,.15,.16],[-.05,.34,.12],[.18,-.34,.1]];
+    var spots=[[ -.32,-.16,.2],[.28,.13,.15],[-.04,.34,.115],[.2,-.32,.09],[-.46,.22,.08]];
     for(var c=0;c<spots.length;c++){
       gameCtx.beginPath();
-      gameCtx.fillStyle=obj.variant==='diamond'?'rgba(0,95,130,.28)':obj.variant==='amethyst'?'rgba(72,20,110,.34)':obj.variant==='gold'?'rgba(92,55,10,.42)':obj.variant==='iron'?'rgba(45,55,65,.34)':'rgba(30,32,38,.35)';
-      gameCtx.arc(spots[c][0]*obj.size,spots[c][1]*obj.size,spots[c][2]*obj.size,0,Math.PI*2); gameCtx.fill();
-    }
-    if(obj.variant==='diamond' || obj.variant==='amethyst'){
-      gameCtx.save();
-      gameCtx.shadowBlur=obj.variant==='diamond'?10:7;
-      gameCtx.shadowColor=obj.color;
-      gameCtx.strokeStyle=obj.variant==='diamond'?'rgba(235,255,255,.9)':'rgba(235,205,255,.75)';
-      gameCtx.lineWidth=1.5;
-      gameCtx.beginPath();
-      gameCtx.moveTo(-obj.size*.48,obj.size*.12);
-      gameCtx.lineTo(0,-obj.size*.5);
-      gameCtx.lineTo(obj.size*.42,obj.size*.18);
-      gameCtx.moveTo(-obj.size*.25,-obj.size*.28);
-      gameCtx.lineTo(obj.size*.2,obj.size*.42);
+      gameCtx.fillStyle=palette.crater;
+      gameCtx.ellipse(spots[c][0]*z,spots[c][1]*z,spots[c][2]*z,spots[c][2]*z*.74,-.35,0,Math.PI*2); gameCtx.fill();
+      gameCtx.strokeStyle='rgba(255,255,255,.12)';
+      gameCtx.lineWidth=1;
       gameCtx.stroke();
+    }
+
+    if(obj.variant!=='stone'){
+      gameCtx.save();
+      gameCtx.shadowBlur=obj.variant==='diamond'?14:obj.variant==='amethyst'?10:5;
+      gameCtx.shadowColor=obj.color;
+      gameCtx.strokeStyle=palette.vein;
+      gameCtx.lineWidth=obj.variant==='diamond'?2.2:1.65;
+      gameCtx.beginPath();
+      gameCtx.moveTo(-z*.5,z*.12);
+      gameCtx.lineTo(-z*.18,-z*.1);
+      gameCtx.lineTo(z*.02,-z*.52);
+      gameCtx.lineTo(z*.36,z*.16);
+      gameCtx.moveTo(-z*.3,-z*.32);
+      gameCtx.lineTo(z*.22,z*.4);
+      if(obj.variant==='gold' || obj.variant==='diamond'){
+        gameCtx.moveTo(-z*.44,z*.35);
+        gameCtx.lineTo(z*.08,z*.16);
+        gameCtx.lineTo(z*.48,z*.33);
+      }
+      gameCtx.stroke();
+      if(obj.variant==='diamond'){
+        gameCtx.globalAlpha=.42;
+        gameCtx.fillStyle='#ffffff';
+        gameCtx.beginPath();
+        gameCtx.moveTo(-z*.12,-z*.46);
+        gameCtx.lineTo(z*.16,-z*.06);
+        gameCtx.lineTo(-z*.1,z*.08);
+        gameCtx.closePath();
+        gameCtx.fill();
+      }
       gameCtx.restore();
     }
   }
