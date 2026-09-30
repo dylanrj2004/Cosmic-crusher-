@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Cosmic Crusher">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Cosmic Crusher</title>
-<meta name="cosmic-crusher-build" content="premium-asteroids-2026-09-30">
+<meta name="cosmic-crusher-build" content="boss-cinematic-2026-09-30">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{
@@ -99,6 +99,9 @@ html,body{
   #combo-display{top:calc(126px + env(safe-area-inset-top,0px))}
   #combo-display{font-size:22px!important}
   #wave-announce{font-size:32px!important}
+  #boss-hud{top:calc(132px + env(safe-area-inset-top,0px));width:min(340px,76vw)}
+  #boss-warning{top:31%}
+  #boss-warning .warning-main{letter-spacing:3px}
 }
 #game-area{
   flex:1;position:relative;overflow:hidden;
@@ -126,6 +129,12 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   opacity:0;transition:opacity .18s ease-out;
 }
 #screen-flash.active{opacity:.42;transition:opacity .04s ease-out}
+#boss-dim{
+  position:absolute;inset:0;z-index:4;pointer-events:none;
+  background:radial-gradient(circle at center,transparent 22%,rgba(0,0,0,.64) 100%);
+  opacity:0;transition:opacity .45s ease;
+}
+#boss-dim.active{opacity:.78}
 #hud{
   position:absolute;
   top:calc(10px + env(safe-area-inset-top,0px));
@@ -185,6 +194,41 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   text-shadow:0 0 30px rgba(255,50,100,0.8);
   opacity:0;pointer-events:none;transition:opacity 0.5s;
   text-align:center;white-space:nowrap;
+}
+#boss-warning{
+  position:absolute;left:50%;top:35%;transform:translate(-50%,-50%) scale(.94);
+  z-index:18;pointer-events:none;text-align:center;opacity:0;
+  color:#fff;font-weight:900;letter-spacing:5px;
+  text-shadow:0 0 18px rgba(255,51,102,.9),0 0 45px rgba(255,51,102,.55);
+  transition:opacity .22s ease,transform .22s ease;
+}
+#boss-warning.active{opacity:1;transform:translate(-50%,-50%) scale(1)}
+#boss-warning .warning-main{display:block;font-size:clamp(32px,7vw,76px);color:#ff335f}
+#boss-warning .warning-sub{display:block;margin-top:7px;font-size:clamp(12px,2.4vw,20px);color:#ffccd8;letter-spacing:3px}
+#boss-hud{
+  position:absolute;left:50%;top:calc(82px + env(safe-area-inset-top,0px));
+  transform:translateX(-50%) translateY(-8px);z-index:14;
+  width:min(520px,58vw);padding:9px 12px;border-radius:12px;
+  background:linear-gradient(180deg,rgba(42,0,20,.88),rgba(10,0,12,.84));
+  border:1px solid rgba(255,51,102,.55);
+  box-shadow:0 0 24px rgba(255,51,102,.22),inset 0 0 18px rgba(255,51,102,.08);
+  pointer-events:none;opacity:0;transition:opacity .25s ease,transform .25s ease;
+}
+#boss-hud.active{opacity:1;transform:translateX(-50%) translateY(0)}
+#boss-name{
+  display:flex;justify-content:space-between;gap:10px;
+  color:#fff;font-size:12px;font-weight:900;letter-spacing:2px;
+  text-shadow:0 0 12px rgba(255,51,102,.8);
+}
+#boss-hp-wrap{
+  height:12px;margin-top:6px;border-radius:999px;overflow:hidden;
+  background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.14);
+}
+#boss-hp-fill{
+  width:100%;height:100%;
+  background:linear-gradient(90deg,#ff174f,#ff7b00,#ffe66d);
+  box-shadow:0 0 16px rgba(255,51,102,.75);
+  transition:width .12s ease;
 }
 #shop-panel{
   background:linear-gradient(180deg,#0d1025 0%,#1a1040 100%);
@@ -297,6 +341,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     <canvas id="gameCanvas"></canvas>
     <div id="screen-vignette"></div>
     <div id="screen-flash"></div>
+    <div id="boss-dim"></div>
     <div id="hud">
       <div class="hud-item">Credits: <span id="credits">0</span></div>
       <div class="hud-item">Total: <span id="total-credits">0</span></div>
@@ -307,6 +352,14 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       <span id="top-wave">WAVE <span id="wave">1</span></span>
       <span id="top-progress-text">Level 0 / 10</span>
       <div id="wave-progress-wrap"><div id="wave-progress-fill"></div></div>
+    </div>
+    <div id="boss-hud">
+      <div id="boss-name"><span id="boss-title">BOSS</span><span id="boss-hp-text">100%</span></div>
+      <div id="boss-hp-wrap"><div id="boss-hp-fill"></div></div>
+    </div>
+    <div id="boss-warning">
+      <span class="warning-main">BOSS INBOUND</span>
+      <span class="warning-sub">CRITICAL THREAT DETECTED</span>
     </div>
     <div id="combo-display">COMBO x1</div>
     <div id="wave-announce"></div>
@@ -378,6 +431,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   var turboMode = /[?&](turbo|codexTurbo)=1(?:&|$)/.test(window.location.search);
   var playerName = 'Pilot';
   var bgTime = 0, screenShake = 0;
+  var bossAlertTimer=null;
 
   var upgrades = [
     {id:'click',name:'Click Power',desc:'Increase tap damage',baseCost:10,costMult:1.5,level:0,effect:function(){clickDamage+=1}},
@@ -969,19 +1023,75 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     var baseCredits = type.shape==='boss'
       ? Math.ceil((type.credits+wave*45)*(1+(wave-1)*0.28))
       : Math.ceil(type.credits*(1+(wave-1)*0.2));
-    objects.push({
+    var newObj={
       x:Math.random()*(canvasW-size*2)+size, y:-size, size:size,
       hp:Math.ceil(type.hp*hpScale), maxHp:Math.ceil(type.hp*hpScale),
       speed:(Math.random()*1.2+0.8+wave*0.08)*speedMod,
       credits:baseCredits,
       color:type.color, shape:type.shape, name:type.name, variant:(type.shape==='boss'?(wave%10===0?'android':'alien'):type.variant),
       rotation:Math.random()*Math.PI*2, rotSpeed:(Math.random()-0.5)*0.04
-    });
+    };
+    objects.push(newObj);
+    if(newObj.shape==='boss') triggerBossEncounter(newObj);
   }
 
   function findUpgrade(id){
     for(var i=0;i<upgrades.length;i++){if(upgrades[i].id===id)return upgrades[i];}
     return {level:0};
+  }
+
+  function activeBoss(){
+    for(var i=0;i<objects.length;i++){
+      if(objects[i] && objects[i].shape==='boss' && !objects[i].destroying) return objects[i];
+    }
+    return null;
+  }
+
+  function triggerBossEncounter(boss){
+    var warning=document.getElementById('boss-warning');
+    var dim=document.getElementById('boss-dim');
+    if(dim) dim.classList.add('active');
+    if(warning){
+      warning.querySelector('.warning-main').textContent=boss.variant==='android'?'WAR MACHINE':'BOSS INBOUND';
+      warning.querySelector('.warning-sub').textContent='WAVE '+wave+' CRITICAL THREAT';
+      warning.classList.add('active');
+    }
+    screenShake=Math.max(screenShake,18);
+    flashScreen('#ff335f');
+    spawnShockwave(canvasW/2,canvasH*.28,'#ff335f',3.2);
+    clearTimeout(bossAlertTimer);
+    bossAlertTimer=setTimeout(function(){
+      if(warning) warning.classList.remove('active');
+    },1650);
+    updateBossHUD();
+  }
+
+  function updateBossHUD(){
+    var boss=activeBoss();
+    var hud=document.getElementById('boss-hud');
+    var dim=document.getElementById('boss-dim');
+    if(!hud) return;
+    if(!boss){
+      hud.classList.remove('active');
+      if(dim) dim.classList.remove('active');
+      return;
+    }
+    var pct=Math.max(0,Math.min(1,boss.hp/boss.maxHp));
+    document.getElementById('boss-title').textContent=(boss.variant==='android'?'ANDROID TITAN':'VOID OVERLORD')+'  WAVE '+wave;
+    document.getElementById('boss-hp-text').textContent=Math.ceil(pct*100)+'%';
+    document.getElementById('boss-hp-fill').style.width=(pct*100)+'%';
+    hud.classList.add('active');
+    if(dim) dim.classList.add('active');
+  }
+
+  function clearBossEncounter(){
+    var warning=document.getElementById('boss-warning');
+    var hud=document.getElementById('boss-hud');
+    var dim=document.getElementById('boss-dim');
+    if(warning) warning.classList.remove('active');
+    if(hud) hud.classList.remove('active');
+    if(dim) dim.classList.remove('active');
+    clearTimeout(bossAlertTimer);
   }
 
   // TOUCH
@@ -1026,6 +1136,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
         spawnParticles(mx,my,obj.color,5);
         spawnShockwave(mx,my,obj.color,obj.shape==='boss'?1.1:.45);
         screenShake=Math.max(screenShake,obj.shape==='boss'?8:3);
+        if(obj.shape==='boss') updateBossHUD();
         if(obj.hp<=0) destroyObject(obj,i);
         combo++;
         clearTimeout(comboTimer);
@@ -1064,6 +1175,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     spawnShockwave(obj.x,obj.y,obj.color,obj.shape==='boss'?2.2:1);
     screenShake=Math.max(screenShake,obj.shape==='boss'?16:obj.variant==='diamond'?9:5);
     flashScreen(obj.shape==='boss'?'#ff3366':obj.color);
+    if(obj.shape==='boss') clearBossEncounter();
     spawnClickText(obj.x,obj.y-20,'+'+earned,'#ffcc00');
 
     var chainU=findUpgrade('chain');
@@ -1105,6 +1217,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       if(!obj || obj.destroying || objects.indexOf(obj)===-1) continue;
       obj.hp-=tickDamage;
       spawnParticles(obj.x,obj.y,'#00aaff',1);
+      if(obj.shape==='boss') updateBossHUD();
       if(obj.hp<=0) destroyObject(obj);
     }
     updateHUD();
@@ -1138,6 +1251,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     var progressText='Level '+Math.min(waveProgress,waveTarget)+' / '+waveTarget;
     document.getElementById('top-progress-text').textContent=progressText;
     document.getElementById('wave-progress-fill').style.width=Math.min(100,(waveProgress/waveTarget)*100)+'%';
+    updateBossHUD();
     var prestigeRequirement=getPrestigeRequirement();
     document.getElementById('prestige-info').textContent=
       totalCredits>=prestigeRequirement
@@ -1189,6 +1303,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     credits=0;totalCredits=0;totalDestroyed=0;
     clickDamage=1;creditMultiplier=1;autoDP=0;combo=0;
     wave=1;waveProgress=0;waveTarget=10;objects=[];
+    clearBossEncounter();
     for(var i=0;i<upgrades.length;i++) upgrades[i].level=0;
     rebuildStats();
     syncDestroyedCount();
@@ -1293,7 +1408,10 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       var obj=objects[i];
       obj.y+=obj.speed;
       obj.rotation+=obj.rotSpeed;
-      if(obj.y>canvasH+obj.size*2){objects.splice(i,1);continue;}
+      if(obj.y>canvasH+obj.size*2){
+        if(obj.shape==='boss') clearBossEncounter();
+        objects.splice(i,1);continue;
+      }
       drawObjectAura(obj);
       gameCtx.save();
       gameCtx.translate(obj.x,obj.y);
