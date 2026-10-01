@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="Cosmic Crusher">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Cosmic Crusher</title>
-<meta name="cosmic-crusher-build" content="boss-cinematic-2026-09-30">
+<meta name="cosmic-crusher-build" content="audio-haptics-feel-2026-10-01">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{
@@ -283,11 +283,28 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   .leader-row{grid-template-columns:20px minmax(0,1fr) auto}
 }
 .upgrade-btn{
-  background:linear-gradient(135deg,#1a1a3e,#2a1a4e);
-  border:1px solid rgba(100,80,200,0.4);border-radius:12px;
+  background:
+    linear-gradient(135deg,rgba(255,255,255,.08),transparent 34%),
+    linear-gradient(135deg,#191638,#29194b);
+  border:1px solid rgba(121,103,255,0.48);border-radius:12px;
   padding:12px 14px;color:#fff;cursor:pointer;
   transition:all 0.15s;text-align:left;min-height:44px;
   position:relative;touch-action:manipulation;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 22px rgba(0,0,0,.22);
+  overflow:hidden;
+}
+.upgrade-btn:before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(110deg,transparent 0%,rgba(0,229,255,.11) 45%,transparent 70%);
+  transform:translateX(-120%);
+  transition:transform .4s ease;
+}
+.upgrade-btn:not(.disabled):hover:before{transform:translateX(120%)}
+.upgrade-btn.bought{animation:buyPulse .42s ease}
+.upgrade-btn.bought:after{
+  content:"";position:absolute;inset:-2px;border-radius:14px;
+  border:1px solid rgba(102,255,136,.9);
+  animation:buyRing .42s ease forwards;pointer-events:none;
 }
 .upgrade-btn:active:not(.disabled){
   transform:scale(0.97);
@@ -319,11 +336,41 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   18%{opacity:1;transform:translateY(-6px) scale(1.08)}
   100%{opacity:0;transform:translateY(-58px) scale(1.42)}
 }
+@keyframes buyPulse{
+  0%{transform:scale(.98)}
+  45%{transform:scale(1.025);box-shadow:0 0 28px rgba(102,255,136,.34),inset 0 1px 0 rgba(255,255,255,.14)}
+  100%{transform:scale(1)}
+}
+@keyframes buyRing{
+  0%{opacity:1;transform:scale(.96)}
+  100%{opacity:0;transform:scale(1.08)}
+}
 #shop-backdrop{
   display:none;position:fixed;top:0;left:0;width:100%;height:100%;
   background:rgba(0,0,0,0.5);z-index:45;
 }
 #shop-backdrop.active{display:block}
+#prestige-modal{
+  position:fixed;inset:0;z-index:190;display:none;align-items:center;justify-content:center;
+  background:radial-gradient(circle at center,rgba(255,102,204,.2),rgba(0,0,0,.78) 68%);
+  padding:24px;pointer-events:none;
+}
+#prestige-modal.active{display:flex;animation:modalFade .3s ease}
+#prestige-card{
+  width:min(420px,92vw);border-radius:18px;padding:26px 22px;text-align:center;
+  border:1px solid rgba(255,102,204,.65);
+  background:linear-gradient(180deg,rgba(40,12,58,.96),rgba(12,8,28,.96));
+  box-shadow:0 0 50px rgba(255,102,204,.24),inset 0 1px 0 rgba(255,255,255,.12);
+}
+#prestige-card h3{
+  color:#ff66cc;font-size:28px;letter-spacing:3px;margin-bottom:8px;
+  text-shadow:0 0 22px rgba(255,102,204,.7);
+}
+#prestige-card p{color:#f2d8ff;font-size:15px;line-height:1.45}
+@keyframes modalFade{
+  0%{opacity:0;transform:scale(.98)}
+  100%{opacity:1;transform:scale(1)}
+}
 </style>
 </head>
 <body>
@@ -392,6 +439,12 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     </div>
   </div>
 </div>
+<div id="prestige-modal">
+  <div id="prestige-card">
+    <h3 id="prestige-modal-title">PRESTIGE</h3>
+    <p id="prestige-modal-text">Permanent multiplier increased.</p>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -420,6 +473,8 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   var credits = 0, totalCredits = 0, totalDestroyed = 0;
   var clickDamage = 1, creditMultiplier = 1, autoDP = 0;
   var bossDamageMultiplier = 1, waveCreditBonus = 1;
+  var rareCreditBonus = 1, stormCreditBonus = 1, critDamageMultiplier = 5;
+  var afkEfficiency = 0.25, afkCapHours = 2, afkGrantNotice = 0;
   var combo = 0, comboTimer = null;
   var wave = 1, waveProgress = 0, waveTarget = 10;
   var prestigeLevel = 0, prestigeMultiplier = 1;
@@ -432,6 +487,8 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   var playerName = 'Pilot';
   var bgTime = 0, screenShake = 0;
   var bossAlertTimer=null;
+  var audioCtx=null, audioUnlocked=false, lastSoundAt=0;
+  var hitPauseFrames=0;
 
   var upgrades = [
     {id:'click',name:'Click Power',desc:'Increase tap damage',baseCost:10,costMult:1.5,level:0,effect:function(){clickDamage+=1}},
@@ -445,8 +502,15 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     {id:'boss',name:'Boss Breaker',desc:'Prestige 1: extra damage to bosses',baseCost:5000,costMult:1.9,level:0,minPrestige:1,maxLevel:25,effect:function(){bossDamageMultiplier+=0.35}},
     {id:'overclock',name:'Overclock Laser',desc:'Prestige 2: +3 auto DPS per level',baseCost:15000,costMult:1.85,level:0,minPrestige:2,maxLevel:30,effect:function(){autoDP+=3}},
     {id:'surge',name:'Credit Surge',desc:'Prestige 3: bigger credit multiplier',baseCost:50000,costMult:2.05,level:0,minPrestige:3,maxLevel:30,effect:function(){creditMultiplier+=0.5}},
+    {id:'afkrelay',name:'AFK Relay',desc:'Prestige 3: stronger away earnings',baseCost:75000,costMult:1.9,level:0,minPrestige:3,maxLevel:25,effect:function(){afkEfficiency+=0.05;afkCapHours+=0.2}},
     {id:'crusher',name:'Crusher Core',desc:'Prestige 4: massive tap damage boost',baseCost:150000,costMult:2.0,level:0,minPrestige:4,maxLevel:25,effect:function(){clickDamage+=5}},
-    {id:'wavepay',name:'Wave Bounty',desc:'Prestige 5: more credits on higher waves',baseCost:500000,costMult:2.1,level:0,minPrestige:5,maxLevel:25,effect:function(){waveCreditBonus+=0.08}}
+    {id:'wavepay',name:'Wave Bounty',desc:'Prestige 5: more credits on higher waves',baseCost:500000,costMult:2.1,level:0,minPrestige:5,maxLevel:25,effect:function(){waveCreditBonus+=0.08}},
+    {id:'gemhunter',name:'Gem Hunter',desc:'Prestige 6: rare asteroids pay more',baseCost:1500000,costMult:2.05,level:0,minPrestige:6,maxLevel:30,effect:function(){rareCreditBonus+=0.22}},
+    {id:'warheads',name:'Void Warheads',desc:'Prestige 7: bosses take heavy bonus damage',baseCost:4500000,costMult:2.08,level:0,minPrestige:7,maxLevel:30,effect:function(){bossDamageMultiplier+=0.8}},
+    {id:'stormbank',name:'Storm Bank',desc:'Prestige 8: special waves earn more credits',baseCost:12000000,costMult:2.12,level:0,minPrestige:8,maxLevel:25,effect:function(){stormCreditBonus+=0.18}},
+    {id:'critcore',name:'Critical Core',desc:'Prestige 9: crits hit harder',baseCost:35000000,costMult:2.14,level:0,minPrestige:9,maxLevel:20,effect:function(){critDamageMultiplier+=0.7}},
+    {id:'singularity',name:'Singularity Beam',desc:'Prestige 10: auto laser scales hard',baseCost:90000000,costMult:2.18,level:0,minPrestige:10,maxLevel:35,effect:function(){autoDP+=12}},
+    {id:'overlord',name:'Overlord Tax',desc:'Prestige 12: all boss payouts increase',baseCost:250000000,costMult:2.2,level:0,minPrestige:12,maxLevel:25,effect:function(){rareCreditBonus+=0.12;waveCreditBonus+=0.05}}
   ];
 
   function getCost(u){return Math.floor(u.baseCost*Math.pow(u.costMult,u.level))}
@@ -462,6 +526,111 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   function cleanName(name){
     name=String(name||'').trim().replace(/\s+/g,' ');
     return name ? name.slice(0,18) : 'Pilot';
+  }
+
+  function unlockAudio(){
+    if(audioUnlocked && audioCtx) return;
+    try{
+      var AudioContext=window.AudioContext||window.webkitAudioContext;
+      if(!AudioContext) return;
+      audioCtx=audioCtx||new AudioContext();
+      if(audioCtx.state==='suspended') audioCtx.resume();
+      audioUnlocked=true;
+    }catch(err){}
+  }
+
+  function playTone(freq,duration,type,gain,delay){
+    unlockAudio();
+    if(!audioCtx) return;
+    var t=audioCtx.currentTime+(delay||0);
+    var osc=audioCtx.createOscillator();
+    var vol=audioCtx.createGain();
+    osc.type=type||'sine';
+    osc.frequency.setValueAtTime(freq,t);
+    vol.gain.setValueAtTime(0.0001,t);
+    vol.gain.exponentialRampToValueAtTime(gain||0.035,t+0.012);
+    vol.gain.exponentialRampToValueAtTime(0.0001,t+Math.max(0.025,duration));
+    osc.connect(vol); vol.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t+duration+0.04);
+  }
+
+  function playNoise(duration,gain,filterFreq){
+    unlockAudio();
+    if(!audioCtx) return;
+    var frames=Math.max(1,Math.floor(audioCtx.sampleRate*duration));
+    var buffer=audioCtx.createBuffer(1,frames,audioCtx.sampleRate);
+    var data=buffer.getChannelData(0);
+    for(var i=0;i<frames;i++){
+      data[i]=(Math.random()*2-1)*(1-i/frames);
+    }
+    var src=audioCtx.createBufferSource();
+    var filter=audioCtx.createBiquadFilter();
+    var vol=audioCtx.createGain();
+    filter.type='lowpass';
+    filter.frequency.value=filterFreq||900;
+    vol.gain.value=gain||0.05;
+    src.buffer=buffer;
+    src.connect(filter); filter.connect(vol); vol.connect(audioCtx.destination);
+    src.start();
+  }
+
+  function playHitSound(obj,crit){
+    var now=performance.now();
+    if(now-lastSoundAt<28 && !crit && (!obj || obj.shape!=='boss')) return;
+    lastSoundAt=now;
+    if(obj && obj.shape==='boss'){
+      playTone(crit?260:170,0.055,'square',crit?0.055:0.04);
+      playTone(crit?520:230,0.035,'triangle',0.025,0.018);
+    } else {
+      playTone(crit?880:430,0.045,crit?'sawtooth':'triangle',crit?0.045:0.026);
+    }
+  }
+
+  function playBreakSound(obj){
+    if(!obj) return;
+    var big=obj.shape==='boss';
+    var filter=obj.variant==='diamond'?1800:obj.variant==='amethyst'?1350:obj.variant==='gold'?1100:big?700:820;
+    playNoise(big?0.42:0.16,big?0.12:0.055,filter);
+    playTone(big?72:obj.variant==='diamond'?920:obj.variant==='amethyst'?620:220,big?0.28:0.09,big?'sawtooth':'triangle',big?0.07:0.03,0.015);
+    if(obj.variant==='diamond') playTone(1320,0.16,'sine',0.032,0.06);
+    if(obj.variant==='amethyst') playTone(840,0.12,'sine',0.03,0.05);
+  }
+
+  function playBossWarningSound(){
+    playTone(112,0.28,'sawtooth',0.075);
+    playTone(84,0.34,'sawtooth',0.065,0.2);
+    playTone(220,0.08,'square',0.04,0.45);
+  }
+
+  function playWaveSound(isBossWave){
+    playTone(isBossWave?190:520,0.08,'triangle',0.045);
+    playTone(isBossWave?120:760,0.16,'triangle',0.04,0.08);
+  }
+
+  function playBuySound(){
+    playTone(660,0.055,'triangle',0.034);
+    playTone(990,0.08,'triangle',0.03,0.055);
+  }
+
+  function playPrestigeSound(){
+    playTone(330,0.12,'sine',0.052);
+    playTone(660,0.16,'sine',0.045,0.08);
+    playTone(990,0.22,'triangle',0.042,0.18);
+  }
+
+  function vibrate(pattern){
+    try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(err){}
+  }
+
+  function vibrateForObject(obj){
+    if(!obj) return;
+    if(obj.shape==='boss') vibrate([42,28,62]);
+    else if(obj.variant==='diamond') vibrate([24,18,24]);
+    else if(obj.variant==='amethyst' || obj.variant==='gold') vibrate(18);
+  }
+
+  function hitPause(frames){
+    hitPauseFrames=Math.max(hitPauseFrames,frames||1);
   }
 
   // SAVE SYSTEM V3
@@ -707,7 +876,8 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     var magnet=findUpgrade('magnet');
     var magnetBonus=1+Math.min(magnet.level,30)*0.15;
     var maxPerKill=maxBase*creditMultiplier*prestigeMultiplier*magnetBonus*Math.max(1,waveCreditBonus)*6;
-    return Math.max(10000,Math.ceil(kills*maxPerKill*1.25));
+    var afkAllowance=prestigeLevel>=3 ? Math.ceil(Math.max(1,autoDP)*3600*Math.max(1,afkCapHours)*creditMultiplier*prestigeMultiplier*Math.max(0.25,afkEfficiency)*12) : 0;
+    return Math.max(10000,Math.ceil(kills*maxPerKill*1.25)+afkAllowance);
   }
 
   function saveGame(){
@@ -738,6 +908,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   }
   function rebuildStats(){
     clickDamage=1; creditMultiplier=1; autoDP=0; bossDamageMultiplier=1; waveCreditBonus=1;
+    rareCreditBonus=1; stormCreditBonus=1; critDamageMultiplier=5; afkEfficiency=0.25; afkCapHours=2;
     for(var i=0;i<upgrades.length;i++){
       var u=upgrades[i], level=u.level;
       if(u.id==='click') clickDamage+=level;
@@ -746,8 +917,15 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       else if(u.id==='boss') bossDamageMultiplier+=level*.35;
       else if(u.id==='overclock') autoDP+=level*3;
       else if(u.id==='surge') creditMultiplier+=level*.5;
+      else if(u.id==='afkrelay'){ afkEfficiency+=level*.05; afkCapHours+=level*.2; }
       else if(u.id==='crusher') clickDamage+=level*5;
       else if(u.id==='wavepay') waveCreditBonus+=level*.08;
+      else if(u.id==='gemhunter') rareCreditBonus+=level*.22;
+      else if(u.id==='warheads') bossDamageMultiplier+=level*.8;
+      else if(u.id==='stormbank') stormCreditBonus+=level*.18;
+      else if(u.id==='critcore') critDamageMultiplier+=level*.7;
+      else if(u.id==='singularity') autoDP+=level*12;
+      else if(u.id==='overlord'){ rareCreditBonus+=level*.12; waveCreditBonus+=level*.05; }
     }
   }
   function loadGame(){
@@ -794,6 +972,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       }
 
       lastLoadedSaveTime=Number(d.savedAt)||0;
+      grantAfkCredits(lastLoadedSaveTime);
       // Immediately move the cleaned legacy state into the isolated V3 save slot.
       if(migrated) saveGame();
     }catch(err){
@@ -804,6 +983,20 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       rebuildStats();
       saveRepairNotice=true;
     }
+  }
+
+  function grantAfkCredits(savedAt){
+    if(prestigeLevel<3 || !savedAt || autoDP<=0) return;
+    var awayMs=Date.now()-Number(savedAt);
+    if(!Number.isFinite(awayMs) || awayMs<60000) return;
+    var capMs=afkCapHours*60*60*1000;
+    var seconds=Math.min(awayMs,capMs)/1000;
+    var earned=Math.floor(autoDP*seconds*creditMultiplier*prestigeMultiplier*afkEfficiency);
+    earned=Math.max(0,Math.min(earned,1e12));
+    if(earned<=0) return;
+    credits+=earned;
+    totalCredits+=earned;
+    afkGrantNotice=earned;
   }
   loadPlayerProfile();
   loadGame();
@@ -819,6 +1012,8 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   window.launchGame = function(e){
     if(e) e.preventDefault();
     if(launched) return;
+    unlockAudio();
+    playWaveSound(false);
     playerName=cleanName(document.getElementById('player-name').value);
     document.getElementById('player-name').value=playerName;
     savePlayerProfile();
@@ -841,6 +1036,15 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
         el.style.opacity=1;
         setTimeout(function(){el.style.opacity=0},2200);
       },450);
+    }
+    if(afkGrantNotice>0){
+      setTimeout(function(){
+        var el=document.getElementById('wave-announce');
+        el.textContent='AFK RELAY +'+formatNum(afkGrantNotice);
+        el.style.opacity=1;
+        playBuySound();
+        setTimeout(function(){el.style.opacity=0},2600);
+      },saveRepairNotice?2850:650);
     }
   };
 
@@ -932,6 +1136,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     gameCanvas.addEventListener('pointerdown', function(e){
       if(e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
+      unlockAudio();
       var rect = gameCanvas.getBoundingClientRect();
       handleHit(e.clientX - rect.left, e.clientY - rect.top);
     }, {passive:false});
@@ -976,11 +1181,11 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   // Stone = common, Iron = uncommon, Gold = rare, Purple = epic,
   // Diamond = legendary jackpot.
   var objectTypes = [
-    {name:'stone asteroid',color:'#777b86',hp:3,size:29,credits:5,shape:'asteroid',variant:'stone',rarity:'COMMON'},
-    {name:'iron asteroid',color:'#aeb8c4',hp:5,size:28,credits:12,shape:'asteroid',variant:'iron',rarity:'UNCOMMON'},
-    {name:'gold asteroid',color:'#d9a52a',hp:8,size:28,credits:35,shape:'asteroid',variant:'gold',rarity:'RARE'},
-    {name:'amethyst asteroid',color:'#a65cff',hp:13,size:29,credits:90,shape:'asteroid',variant:'amethyst',rarity:'EPIC'},
-    {name:'diamond asteroid',color:'#43d9ff',hp:22,size:31,credits:300,shape:'asteroid',variant:'diamond',rarity:'LEGENDARY'},
+    {name:'Cinder Rock',color:'#777b86',hp:3,size:29,credits:5,shape:'asteroid',variant:'stone',rarity:'COMMON'},
+    {name:'Iron Husk',color:'#aeb8c4',hp:5,size:28,credits:12,shape:'asteroid',variant:'iron',rarity:'UNCOMMON'},
+    {name:'Solar Nugget',color:'#d9a52a',hp:8,size:28,credits:35,shape:'asteroid',variant:'gold',rarity:'RARE'},
+    {name:'Void Amethyst',color:'#a65cff',hp:13,size:29,credits:90,shape:'asteroid',variant:'amethyst',rarity:'EPIC'},
+    {name:'Diamond Comet',color:'#43d9ff',hp:22,size:31,credits:300,shape:'asteroid',variant:'diamond',rarity:'LEGENDARY'},
     {name:'raider ship',color:'#66ff99',hp:8,size:34,credits:25,shape:'ship',variant:'raider',rarity:'HOSTILE'},
     {name:'boss',color:'#ff3366',hp:50,size:64,credits:120,shape:'boss',variant:'alien',rarity:'BOSS'}
   ];
@@ -1001,14 +1206,30 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       }
       typeIndex=6;
     } else {
-      // Spawn odds: 50% stone, 24% iron, 12% gold, 5% amethyst,
-      // 1% diamond jackpot, 8% enemy ship.
-      if(r<0.50) typeIndex=0;
-      else if(r<0.74) typeIndex=1;
-      else if(r<0.86) typeIndex=2;
-      else if(r<0.91) typeIndex=3;
-      else if(r<0.92) typeIndex=4;
-      else typeIndex=5;
+      if(wave%10===0){
+        // Crystal Rush: fewer rocks, more high-value targets.
+        if(r<0.25) typeIndex=1;
+        else if(r<0.58) typeIndex=2;
+        else if(r<0.82) typeIndex=3;
+        else if(r<0.90) typeIndex=4;
+        else typeIndex=5;
+      } else if(wave%7===0){
+        // Meteor Storm: dense mid-tier asteroid wave.
+        if(r<0.34) typeIndex=0;
+        else if(r<0.68) typeIndex=1;
+        else if(r<0.86) typeIndex=2;
+        else if(r<0.93) typeIndex=3;
+        else typeIndex=5;
+      } else {
+        // Spawn odds: 50% stone, 24% iron, 12% gold, 5% amethyst,
+        // 1% diamond jackpot, 8% enemy ship.
+        if(r<0.50) typeIndex=0;
+        else if(r<0.74) typeIndex=1;
+        else if(r<0.86) typeIndex=2;
+        else if(r<0.91) typeIndex=3;
+        else if(r<0.92) typeIndex=4;
+        else typeIndex=5;
+      }
     }
     var type = objectTypes[typeIndex];
     var sizeU = findUpgrade('size');
@@ -1057,6 +1278,8 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       warning.classList.add('active');
     }
     screenShake=Math.max(screenShake,18);
+    playBossWarningSound();
+    vibrate([35,30,75]);
     flashScreen('#ff335f');
     spawnShockwave(canvasW/2,canvasH*.28,'#ff335f',3.2);
     clearTimeout(bossAlertTimer);
@@ -1126,16 +1349,20 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
         var dmg = clickDamage;
         if(obj.shape==='boss') dmg=Math.ceil(dmg*bossDamageMultiplier);
         var critU = findUpgrade('crit');
+        var crit=false;
         if(Math.random()<critU.level*0.04){
-          dmg*=5;
+          crit=true;
+          dmg*=critDamageMultiplier;
           spawnClickText(mx,my,'CRIT! '+dmg,'#ff3366');
         } else {
           spawnClickText(mx,my,''+dmg,'#00e5ff');
         }
         obj.hp -= dmg;
+        playHitSound(obj,crit);
         spawnParticles(mx,my,obj.color,5);
         spawnShockwave(mx,my,obj.color,obj.shape==='boss'?1.1:.45);
         screenShake=Math.max(screenShake,obj.shape==='boss'?8:3);
+        if(crit || obj.shape==='boss') hitPause(obj.shape==='boss'?2:1);
         if(obj.shape==='boss') updateBossHUD();
         if(obj.hp<=0) destroyObject(obj,i);
         combo++;
@@ -1161,7 +1388,9 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     var magnetBonus=1+magnetU.level*0.15;
     var comboBonus=1+Math.min(combo,50)*0.05;
     var waveBonus=Math.min(6,1+(wave-1)*(waveCreditBonus-1));
-    var earned=Math.ceil(obj.credits*creditMultiplier*prestigeMultiplier*magnetBonus*comboBonus*waveBonus);
+    var rareBonus=(obj.variant==='gold'||obj.variant==='amethyst'||obj.variant==='diamond'||obj.shape==='boss')?rareCreditBonus:1;
+    var specialWaveBonus=(wave%7===0||wave%10===0)?stormCreditBonus:1;
+    var earned=Math.ceil(obj.credits*creditMultiplier*prestigeMultiplier*magnetBonus*comboBonus*waveBonus*rareBonus*specialWaveBonus);
     if(!Number.isFinite(earned) || earned<0) earned=0;
     earned=Math.min(earned,1e12);
 
@@ -1171,11 +1400,17 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     updateLeaderboard();
 
     var burst=obj.shape==='boss'?22:obj.variant==='diamond'?18:obj.variant==='amethyst'?15:10;
+    playBreakSound(obj);
+    vibrateForObject(obj);
+    hitPause(obj.shape==='boss'?6:obj.variant==='diamond'?4:obj.variant==='amethyst'?3:2);
     spawnParticles(obj.x,obj.y,obj.color,burst);
+    spawnRarityExplosion(obj);
     spawnShockwave(obj.x,obj.y,obj.color,obj.shape==='boss'?2.2:1);
     screenShake=Math.max(screenShake,obj.shape==='boss'?16:obj.variant==='diamond'?9:5);
-    flashScreen(obj.shape==='boss'?'#ff3366':obj.color);
-    if(obj.shape==='boss') clearBossEncounter();
+    if(obj.shape==='boss'){
+      flashScreen('#ff3366');
+      clearBossEncounter();
+    }
     spawnClickText(obj.x,obj.y-20,'+'+earned,'#ffcc00');
 
     var chainU=findUpgrade('chain');
@@ -1225,9 +1460,11 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
 
   function announceWave(){
     var el=document.getElementById('wave-announce');
-    el.textContent='WAVE '+wave;
+    var special=wave%10===0?'CRYSTAL RUSH':wave%7===0?'METEOR STORM':'';
+    el.textContent=special ? special+' - WAVE '+wave : 'WAVE '+wave;
     el.style.opacity=1;
     screenShake=Math.max(screenShake,wave%5===0?12:6);
+    playWaveSound(wave%5===0);
     flashScreen(wave%5===0?'#ff3366':'#43d9ff');
     spawnShockwave(canvasW/2,canvasH*.45,wave%5===0?'#ff3366':'#43d9ff',wave%5===0?2.6:1.4);
     setTimeout(function(){el.style.opacity=0},2000);
@@ -1293,15 +1530,21 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     if(credits<cost) return;
     if(u.maxLevel&&u.level>=u.maxLevel) return;
     credits-=cost; u.level++; u.effect();
+    playBuySound();
+    vibrate(12);
     updateHUD(); renderUpgrades(); saveGame();
+    pulseUpgradeCard(index);
     updateLeaderboard();
   }
 
   window.prestige = function(){
     if(totalCredits<getPrestigeRequirement()) return;
+    playPrestigeSound();
+    vibrate([35,30,35,30,90]);
     prestigeLevel++; prestigeMultiplier+=0.5;
     credits=0;totalCredits=0;totalDestroyed=0;
     clickDamage=1;creditMultiplier=1;autoDP=0;combo=0;
+    afkGrantNotice=0;
     wave=1;waveProgress=0;waveTarget=10;objects=[];
     clearBossEncounter();
     for(var i=0;i<upgrades.length;i++) upgrades[i].level=0;
@@ -1313,8 +1556,29 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     el.textContent='PRESTIGE '+prestigeLevel+' '+prestigeMultiplier.toFixed(1)+'x';
     el.style.opacity=1;
     setTimeout(function(){el.style.opacity=0},3000);
+    showPrestigeModal();
     saveGame();
   };
+
+  function showPrestigeModal(){
+    var modal=document.getElementById('prestige-modal');
+    if(!modal) return;
+    document.getElementById('prestige-modal-title').textContent='PRESTIGE '+prestigeLevel;
+    document.getElementById('prestige-modal-text').textContent='Permanent multiplier upgraded to '+prestigeMultiplier.toFixed(1)+'x. New prestige upgrades unlocked as you climb.';
+    modal.classList.add('active');
+    clearTimeout(showPrestigeModal.timer);
+    showPrestigeModal.timer=setTimeout(function(){modal.classList.remove('active')},2600);
+  }
+
+  function pulseUpgradeCard(index){
+    setTimeout(function(){
+      var cards=document.querySelectorAll('.upgrade-btn');
+      if(cards[index]){
+        cards[index].classList.add('bought');
+        setTimeout(function(){cards[index] && cards[index].classList.remove('bought')},480);
+      }
+    },0);
+  }
 
   // PARTICLES
   function spawnParticles(x,y,color,count){
@@ -1332,6 +1596,33 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     }
   }
 
+  function spawnRarityExplosion(obj){
+    if(!obj) return;
+    if(obj.shape==='boss'){
+      spawnParticles(obj.x,obj.y,'#ff7b00',18);
+      spawnParticles(obj.x,obj.y,'#ffe66d',12);
+      spawnShockwave(obj.x,obj.y,'#ffe66d',3);
+      return;
+    }
+    if(obj.shape==='ship'){
+      spawnParticles(obj.x,obj.y,'#66ff99',8);
+      spawnParticles(obj.x,obj.y,'#ff6b22',8);
+      return;
+    }
+    if(obj.variant==='diamond'){
+      spawnParticles(obj.x,obj.y,'#f7ffff',14);
+      spawnParticles(obj.x,obj.y,'#43d9ff',12);
+      spawnShockwave(obj.x,obj.y,'#e9fdff',1.8);
+    } else if(obj.variant==='amethyst'){
+      spawnParticles(obj.x,obj.y,'#e3c5ff',12);
+      spawnShockwave(obj.x,obj.y,'#a65cff',1.45);
+    } else if(obj.variant==='gold'){
+      spawnParticles(obj.x,obj.y,'#ffe39a',10);
+    } else if(obj.variant==='iron'){
+      spawnParticles(obj.x,obj.y,'#dce9f5',5);
+    }
+  }
+
   function spawnShockwave(x,y,color,power){
     if(rings.length>24) rings.shift();
     rings.push({x:x,y:y,color:color,life:1,radius:8,maxRadius:36+(power||1)*42,width:2+(power||1)*1.8});
@@ -1340,7 +1631,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
   function flashScreen(color){
     var el=document.getElementById('screen-flash');
     if(!el) return;
-    el.style.background='radial-gradient(circle at center,rgba(255,255,255,.85), '+color+'55 35%, transparent 72%)';
+    el.style.background='radial-gradient(circle at center,'+color+'88, '+color+'44 36%, transparent 72%)';
     el.classList.add('active');
     clearTimeout(flashScreen.timer);
     flashScreen.timer=setTimeout(function(){el.classList.remove('active')},55);
@@ -1404,10 +1695,15 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     }
     gameCtx.save();
     gameCtx.translate(shakeX,shakeY);
+    var frozen=hitPauseFrames>0;
+    if(frozen) hitPauseFrames--;
     for(var i=objects.length-1;i>=0;i--){
       var obj=objects[i];
-      obj.y+=obj.speed;
-      obj.rotation+=obj.rotSpeed;
+      if(!frozen){
+        obj.y+=obj.speed;
+        obj.rotation+=obj.rotSpeed;
+        maybeSpawnRareTrail(obj);
+      }
       if(obj.y>canvasH+obj.size*2){
         if(obj.shape==='boss') clearBossEncounter();
         objects.splice(i,1);continue;
@@ -1433,6 +1729,24 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
       }
     }
     gameCtx.restore();
+  }
+
+  function maybeSpawnRareTrail(obj){
+    if(!obj || obj.shape!=='asteroid') return;
+    var chance=obj.variant==='diamond'?.28:obj.variant==='amethyst'?.2:obj.variant==='gold'?.12:0;
+    if(!chance || Math.random()>chance) return;
+    if(particles.length>250) return;
+    particles.push({
+      x:obj.x+(Math.random()-.5)*obj.size*.8,
+      y:obj.y+(Math.random()-.5)*obj.size*.8,
+      vx:(Math.random()-.5)*0.8,
+      vy:-1.1-Math.random()*1.4,
+      size:obj.variant==='diamond'?3.2:2.5,
+      color:obj.variant==='diamond'?'#f7ffff':obj.variant==='amethyst'?'#e3c5ff':'#ffe39a',
+      life:.9,
+      decay:.04,
+      streak:true
+    });
   }
 
   function drawObjectAura(obj){
