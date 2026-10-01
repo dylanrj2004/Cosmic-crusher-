@@ -1314,6 +1314,16 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%}
     if(warning) warning.classList.remove('active');
     if(hud) hud.classList.remove('active');
     if(dim) dim.classList.remove('active');
+    var title=document.getElementById('boss-title');
+    var hpText=document.getElementById('boss-hp-text');
+    var hpFill=document.getElementById('boss-hp-fill');
+    if(title) title.textContent='BOSS';
+    if(hpText) hpText.textContent='100%';
+    if(hpFill) hpFill.style.width='0%';
+    if(warning){
+      warning.querySelector('.warning-main').textContent='BOSS INBOUND';
+      warning.querySelector('.warning-sub').textContent='CRITICAL THREAT DETECTED';
+    }
     clearTimeout(bossAlertTimer);
   }
 
